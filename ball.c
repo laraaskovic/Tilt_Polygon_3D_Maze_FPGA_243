@@ -89,12 +89,12 @@ int maps[NUM_MAPS][ROWS][COLS] = {
     {1,1,1,1,1,1,1,1,1,1},
     {1,0,0,0,0,0,0,0,0,1},
     {1,0,1,0,0,1,0,0,1,1},
-    {1,0,0,0,0,0,0,0,0,1},
+    {1,0,0,1,0,0,0,0,0,1},
     {1,0,0,1,0,0,0,1,0,1},
-    {1,0,0,0,0,1,0,0,0,1},
+    {1,0,0,0,1,1,0,0,0,1},
     {1,0,1,0,0,0,0,0,0,1},
     {1,1,0,0,1,0,0,1,0,1},
-    {1,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,1,0,0,0,0,1},
     {1,1,1,1,1,1,1,1,1,1},
 },};
 
@@ -109,7 +109,6 @@ void draw_rect(int x, int y, int w, int h, short int color) {
             plot_pixel(x+c, y+r, color);
 }
 
-// ── pretty wall tile ─────────────────────────────────────────────────────────
 // dark outer border → solid white core → 1px shine top-left
 void draw_wall_tile(int col, int row) {
     int x = MAP_OFFSET_X + col * TILE;
