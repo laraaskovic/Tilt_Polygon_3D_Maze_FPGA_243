@@ -1,164 +1,133 @@
 """
-train.py  —  DQN trainer for the FPGA maze agent
+train.py  —  trains a Q-learning agent and exports q_table.h for use in ball.c
 Run:  python train.py
-Saves:  dqn_model.pth   (PyTorch weights, used by agent.py)
-        train_log.txt   (reward log so you can plot progress)
+Output: q_table.h  (include this in your ball/ folder)
 """
 
 import random
 import numpy as np
-from collections import deque
-import torch
-import torch.nn as nn
-import torch.optim as optim
-
 import maze_env
-from maze_env import MazeEnv, STATE_DIM, N_ACTIONS
+from maze_env import MazeEnv, N_ACTIONS, COLS, ROWS, NUM_MAPS, get_q, best_action
 
-# ── hyper-parameters ──────────────────────────────────────────────────────────
-EPISODES        = 3_000
-BATCH_SIZE      = 64
-GAMMA           = 0.97
-LR              = 1e-3
-REPLAY_SIZE     = 20_000
-TARGET_UPDATE   = 200
-EPSILON_START   = 1.0
-EPSILON_END     = 0.05
-EPSILON_DECAY   = 0.9985
-HIDDEN          = 64
-SAVE_PATH       = "dqn_model.pth"
-LOG_PATH        = "train_log.txt"
-PRINT_EVERY     = 500
+EPISODES   = 5000
+ALPHA      = 0.2
+GAMMA      = 0.95
+EPS_START  = 1.0
+EPS_END    = 0.05
+EPS_DECAY  = 0.999
+PRINT_EVERY = 500
 
-
-# ── network ───────────────────────────────────────────────────────────────────
-
-class DQN(nn.Module):
-    def __init__(self, state_dim, n_actions, hidden=HIDDEN):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(state_dim, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, n_actions),
-        )
-
-    def forward(self, x):
-        return self.net(x)
-
-
-# ── replay buffer ─────────────────────────────────────────────────────────────
-
-class ReplayBuffer:
-    def __init__(self, capacity):
-        self.buf = deque(maxlen=capacity)
-
-    def push(self, s, a, r, s2, done):
-        self.buf.append((s, a, r, s2, done))
-
-    def sample(self, n):
-        batch = random.sample(self.buf, n)
-        s, a, r, s2, d = zip(*batch)
-        return (
-            torch.FloatTensor(np.array(s)),
-            torch.LongTensor(a),
-            torch.FloatTensor(r),
-            torch.FloatTensor(np.array(s2)),
-            torch.FloatTensor(d),
-        )
-
-    def __len__(self):
-        return len(self.buf)
-
-
-# ── training loop ─────────────────────────────────────────────────────────────
 
 def train():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Training on {device}  |  state_dim={STATE_DIM}  n_actions={N_ACTIONS}")
-
-    env        = MazeEnv()
-    policy_net = DQN(STATE_DIM, N_ACTIONS).to(device)
-    target_net = DQN(STATE_DIM, N_ACTIONS).to(device)
-    target_net.load_state_dict(policy_net.state_dict())
-    target_net.eval()
-
-    optimizer  = optim.Adam(policy_net.parameters(), lr=LR)
-    buffer     = ReplayBuffer(REPLAY_SIZE)
-    epsilon    = EPSILON_START
+    env = MazeEnv()
+    epsilon = EPS_START
     rewards_log = []
-
-    log_file = open(LOG_PATH, "w")
-    log_file.write("episode,total_reward,epsilon\n")
 
     for ep in range(EPISODES):
         state = env.reset()
         total_reward = 0.0
 
         while True:
-            # ε-greedy action
             if random.random() < epsilon:
-                action = random.randint(0, N_ACTIONS - 1)
+                action = random.randint(0, N_ACTIONS-1)
             else:
-                with torch.no_grad():
-                    s_t = torch.FloatTensor(state).unsqueeze(0).to(device)
-                    action = int(policy_net(s_t).argmax(dim=1).item())
+                action = best_action(state)
 
             next_state, reward, done = env.step(action)
-            buffer.push(state, action, reward, next_state, float(done))
+
+            # Q update
+            old_q    = get_q(state, action)
+            best_nq  = max(get_q(next_state, a) for a in range(N_ACTIONS))
+            maze_env.Q[(state, action)] = old_q + ALPHA * (reward + GAMMA * best_nq - old_q)
+
             state = next_state
             total_reward += reward
-
-            # learn once we have enough samples
-            if len(buffer) >= BATCH_SIZE:
-                s, a, r, s2, d = buffer.sample(BATCH_SIZE)
-                s  = s.to(device);  a  = a.to(device)
-                r  = r.to(device);  s2 = s2.to(device)
-                d  = d.to(device)
-
-                # current Q values
-                q_vals = policy_net(s).gather(1, a.unsqueeze(1)).squeeze(1)
-
-                # target Q values (Double DQN style)
-                with torch.no_grad():
-                    next_actions = policy_net(s2).argmax(dim=1)
-                    next_q = target_net(s2).gather(1, next_actions.unsqueeze(1)).squeeze(1)
-                    target_q = r + GAMMA * next_q * (1 - d)
-
-                loss = nn.SmoothL1Loss()(q_vals, target_q)
-                optimizer.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(policy_net.parameters(), 1.0)
-                optimizer.step()
-
             if done:
                 break
 
-        epsilon = max(EPSILON_END, epsilon * EPSILON_DECAY)
+        epsilon = max(EPS_END, epsilon * EPS_DECAY)
         rewards_log.append(total_reward)
-        log_file.write(f"{ep},{total_reward:.4f},{epsilon:.5f}\n")
 
-        # copy to target net
-        if ep % TARGET_UPDATE == 0 and ep > 0:
-            target_net.load_state_dict(policy_net.state_dict())
-
-        # per-episode live update (overwrites same line)
-        window = rewards_log[-100:] if len(rewards_log) >= 100 else rewards_log
-        avg  = np.mean(window)
-        wins = sum(1 for r in window if r > 5.0)
-        print(f"\rEp {ep:6d}/{EPISODES} | avg: {avg:7.2f} | "
-              f"wins/100: {wins:3d} | ε: {epsilon:.4f} | "
-              f"buf: {len(buffer):6d}", end="", flush=True)
-
-        # full newline every PRINT_EVERY episodes
-        if ep % PRINT_EVERY == 0 and ep > 0:
+        if ep % PRINT_EVERY == 0:
+            window = rewards_log[-100:] if len(rewards_log) >= 100 else rewards_log
+            avg  = np.mean(window)
+            wins = sum(1 for r in window if r > 5.0)
+            print(f"\rEp {ep:5d}/{EPISODES} | avg: {avg:7.2f} | wins/100: {wins:3d} | eps: {epsilon:.3f}", end="", flush=True)
             print()
 
-    log_file.close()
-    torch.save(policy_net.state_dict(), SAVE_PATH)
-    print(f"\nDone! Model saved to {SAVE_PATH}")
-    print(f"Training log saved to {LOG_PATH}")
+    print(f"\nDone! {len(maze_env.Q)} Q-table entries")
+    export_c_header(maze_env.Q)
+
+
+def export_c_header(Q):
+    """
+    Exports Q-table as a C header q_table.h
+    State = (agent_col, agent_row, target_col, target_row, map_idx)
+    Action = 0..3
+    Table is a flat array indexed by:
+      idx = ((map * ROWS + ar) * COLS + ac) * (ROWS * COLS) + tr * COLS + tc
+    Value stored as int16 (Q * 100, clamped to +-32767)
+    """
+
+    # build flat array
+    # dimensions: [NUM_MAPS][ROWS][COLS][ROWS][COLS][N_ACTIONS]
+    size = NUM_MAPS * ROWS * COLS * ROWS * COLS * N_ACTIONS
+    table = [0] * size
+
+    def idx(m, ar, ac, tr, tc, a):
+        return (((m * ROWS + ar) * COLS + ac) * ROWS + tr) * COLS * N_ACTIONS + tc * N_ACTIONS + a
+
+    for (state, action), val in Q.items():
+        ac, ar, tc, tr, m = state
+        i = idx(m, ar, ac, tr, tc, action)
+        if 0 <= i < size:
+            # store as int16 scaled by 100, clamped
+            scaled = int(val * 100)
+            scaled = max(-32767, min(32767, scaled))
+            table[i] = scaled
+
+    # write header
+    with open("q_table.h", "w") as f:
+        f.write("// Auto-generated by train.py — do not edit\n")
+        f.write("// Q-table: state=(agent_col,agent_row,target_col,target_row,map), action=0..3\n")
+        f.write("// Values scaled x100 as int16\n\n")
+        f.write("#ifndef Q_TABLE_H\n#define Q_TABLE_H\n\n")
+        f.write(f"#define QT_MAPS    {NUM_MAPS}\n")
+        f.write(f"#define QT_ROWS    {ROWS}\n")
+        f.write(f"#define QT_COLS    {COLS}\n")
+        f.write(f"#define QT_ACTIONS {N_ACTIONS}\n\n")
+        f.write("// best_action macro: returns 0-3\n")
+        f.write("// usage: int a = qt_best_action(agent_col, agent_row, target_col, target_row, map_idx);\n\n")
+        f.write(f"static const short q_table[{size}] = {{\n")
+
+        # write in rows of 16 for readability
+        for i in range(0, size, 16):
+            chunk = table[i:i+16]
+            f.write("    " + ", ".join(str(v) for v in chunk))
+            if i + 16 < size:
+                f.write(",")
+            f.write("\n")
+
+        f.write("};\n\n")
+
+        # helper function inline
+        f.write("static inline int qt_idx(int m, int ar, int ac, int tr, int tc, int a) {\n")
+        f.write("    return (((m * QT_ROWS + ar) * QT_COLS + ac) * QT_ROWS + tr)\n")
+        f.write("           * QT_COLS * QT_ACTIONS + tc * QT_ACTIONS + a;\n")
+        f.write("}\n\n")
+        f.write("static inline int qt_best_action(int ac, int ar, int tc, int tr, int m) {\n")
+        f.write("    int best_a = 0;\n")
+        f.write("    short best_v = q_table[qt_idx(m, ar, ac, tr, tc, 0)];\n")
+        f.write("    short v;\n")
+        f.write("    v = q_table[qt_idx(m, ar, ac, tr, tc, 1)]; if (v > best_v) { best_v = v; best_a = 1; }\n")
+        f.write("    v = q_table[qt_idx(m, ar, ac, tr, tc, 2)]; if (v > best_v) { best_v = v; best_a = 2; }\n")
+        f.write("    v = q_table[qt_idx(m, ar, ac, tr, tc, 3)]; if (v > best_v) { best_v = v; best_a = 3; }\n")
+        f.write("    return best_a;\n")
+        f.write("}\n\n")
+        f.write("#endif // Q_TABLE_H\n")
+
+    print(f"Exported q_table.h  ({size} entries, {size*2//1024} KB)")
+    print("Copy q_table.h into your ball/ folder and recompile!")
 
 
 if __name__ == "__main__":
