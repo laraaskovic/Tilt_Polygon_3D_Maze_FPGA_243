@@ -94,8 +94,7 @@ int maps[NUM_MAPS][ROWS][COLS] = {
     {1,1,1,1,1,1,1,1,1,1}},
 };
 
-// ── helper functions — declared first so everything below can use them ─────────
-
+// ── tile/pixel helpers — defined first so all functions below can use them ────
 int px_to_col(int px) { return (px + BALL_SIZE/2 - MAP_OFFSET_X) / TILE; }
 int py_to_row(int py) { return (py + BALL_SIZE/2 - MAP_OFFSET_Y) / TILE; }
 int col_to_px(int col) { return MAP_OFFSET_X + col*TILE + (TILE-BALL_SIZE)/2; }
@@ -319,25 +318,35 @@ int main(void) {
 
     while (1) {
 
-        // ── RL agent move every 80000 ticks ──────────────────────────────────
+        // ── RL agent: moves one tile at a time, snapped to grid ───────────────
         agent_tick++;
         if (agent_tick >= 80000) {
             agent_tick = 0;
 
+            // get current tile
             int ac = px_to_col(agent_px);
             int ar = py_to_row(agent_py);
+
+            // snap to exact tile so no pixel drift accumulates
+            agent_px = col_to_px(ac);
+            agent_py = row_to_py(ar);
+
+            // Q-table lookup
             int action = qt_best_action(ac, ar, target_col, target_row, cm);
 
-            int nax = agent_px, nay = agent_py;
-            if      (action == 0) nay -= SPEED;
-            else if (action == 1) nay += SPEED;
-            else if (action == 2) nax -= SPEED;
-            else if (action == 3) nax += SPEED;
+            // move one tile in chosen direction
+            int nac = ac, nar = ar;
+            if      (action == 0) nar -= 1;
+            else if (action == 1) nar += 1;
+            else if (action == 2) nac -= 1;
+            else if (action == 3) nac += 1;
 
-            if (!hits_wall(cm, nax, nay)) {
+            // only move if tile is in bounds and not a wall
+            if (nac >= 0 && nac < COLS && nar >= 0 && nar < ROWS
+                    && maps[cm][nar][nac] == 0) {
                 draw_ball(agent_px, agent_py, BLACK);
-                agent_px = nax;
-                agent_py = nay;
+                agent_px = col_to_px(nac);
+                agent_py = row_to_py(nar);
                 draw_target(target_col, target_row, COL_TGT_OUT);
                 draw_ball(agent_px, agent_py, COL_AGENT);
             }
