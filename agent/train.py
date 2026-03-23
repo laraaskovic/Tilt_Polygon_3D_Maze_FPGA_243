@@ -9,12 +9,12 @@ import numpy as np
 import maze_env
 from maze_env import MazeEnv, N_ACTIONS, COLS, ROWS, NUM_MAPS, get_q, best_action
 
-EPISODES   = 5000
-ALPHA      = 0.2
-GAMMA      = 0.95
+EPISODES   = 10000
+ALPHA      = 0.15
+GAMMA      = 0.97
 EPS_START  = 1.0
 EPS_END    = 0.05
-EPS_DECAY  = 0.999
+EPS_DECAY  = 0.9995
 PRINT_EVERY = 500
 
 
@@ -57,6 +57,10 @@ def train():
 
     print(f"\nDone! {len(maze_env.Q)} Q-table entries")
     export_c_header(maze_env.Q)
+    import json
+    with open("q_table.json", "w") as f:
+        json.dump({str(k): v for k, v in maze_env.Q.items()}, f)
+    print("Also saved q_table.json for visualize.py")
 
 
 def export_c_header(Q):

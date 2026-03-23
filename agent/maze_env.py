@@ -1,10 +1,9 @@
 import numpy as np
 import random
 
-# ── constants — must match ball.c exactly ─────────────────────────────────────
-COLS     = 10
-ROWS     = 10
-NUM_MAPS = 6
+COLS      = 10
+ROWS      = 10
+NUM_MAPS  = 6
 MAX_STEPS = 300
 N_ACTIONS = 4  # 0=up 1=down 2=left 3=right
 
@@ -76,8 +75,6 @@ MAPS = [
      [1,1,1,1,1,1,1,1,1,1]],
 ]
 
-# ── Q table ───────────────────────────────────────────────────────────────────
-# state = (agent_col, agent_row, target_col, target_row, map_idx)
 Q = {}
 
 def get_q(s, a):
@@ -87,15 +84,8 @@ def best_action(s):
     return int(np.argmax([get_q(s, a) for a in range(N_ACTIONS)]))
 
 
-# ── environment ───────────────────────────────────────────────────────────────
-
 class MazeEnv:
     def __init__(self):
-        self.map_idx = 0
-        self.grid = MAPS[0]
-        self.col = self.row = 1
-        self.target_col = self.target_row = 0
-        self.steps = 0
         self.reset()
 
     def reset(self, map_idx=None):
@@ -109,6 +99,9 @@ class MazeEnv:
                 break
         self.target_col, self.target_row = tc, tr
         self.steps = 0
+        self.visited = {}   # tile -> visit count
+        self.visited[(self.col, self.row)] = 1
+        self.last_col, self.last_row = self.col, self.row
         return self._state()
 
     def _state(self):
@@ -123,11 +116,22 @@ class MazeEnv:
 
         self.steps += 1
         moved = (0 <= nc < COLS and 0 <= nr < ROWS and self.grid[nr][nc] == 0)
+
         if moved:
+            self.last_col, self.last_row = self.col, self.row
             self.col, self.row = nc, nr
 
         done = False
-        reward = -0.05 if moved else -0.5
+
+        if not moved:
+            reward = -1.0                          # wall bump
+        else:
+            visit_count = self.visited.get((self.col, self.row), 0)
+            if visit_count == 0:
+                reward = -0.05                     # fresh tile, small penalty
+            else:
+                reward = -0.3 * visit_count        # revisit penalty scales up
+            self.visited[(self.col, self.row)] = visit_count + 1
 
         if self.col == self.target_col and self.row == self.target_row:
             reward, done = 10.0, True
