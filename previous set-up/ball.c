@@ -32,14 +32,18 @@
 #define COL_WALL_OUTER 0x4208   // dark gray wall border
 #define COL_WALL_CORE  0xFFFF   // white wall center
 #define COL_WALL_SHINE 0xAD55   // light blue-gray wall highlight
-#define COL_BALL_OUT   0xF800   // red outer ring  (player ball)
-#define COL_BALL_MID   0xFC10   // orange mid ring (player ball)
-#define COL_BALL_IN    0xFFF0   // yellow core     (player ball)
+
+#define COL_BALL_OUT   0xF81F   // red outer ring  (player ball)
+#define COL_BALL_MID   0xF2B5   // orange mid ring (player ball)
+#define COL_BALL_IN    0xFFFF   // yellow core     (player ball)
+
 #define COL_TGT_OUT    0x07FF   // cyan outer ring  (target)
 #define COL_TGT_MID    0x07E0   // green mid ring   (target)
 #define COL_TGT_IN     0xFFFF   // white center dot (target)
+
 #define COL_TGT_PULSE  0x03EF   // teal pulse ring  (target)
-#define COL_AGENT      0x07E0   // green agent ball (RL agent)
+
+#define COL_AGENT      0x001F   // blue agent ball (RL agent)
 
 // pixel buffer
 // Buffer1[y][x] = color value for pixel at (x,y)
