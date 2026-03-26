@@ -491,7 +491,7 @@ int main(void) {
     while ((*(pixel_ctrl+3) & 0x01) != 0);
     *(pixel_ctrl+1) = (int)&Buffer1;
 
-    int cm = 0;
+    int cm = 0; // Current map, start at first then be random
     draw_map(cm);
 
     // player starts at tile (1,1)
@@ -499,27 +499,22 @@ int main(void) {
     int py = row_to_py(1);
     draw_ball(px, py, COL_BALL_OUT);
 
-    // RL agent starts at tile (2,1) — one tile right of player
+    // RL agent starts at tile (2,1), one tile right of player
     agent_px = col_to_px(2);
     agent_py = row_to_py(1);
     draw_ball(agent_px, agent_py, COL_AGENT);
 
-    spawn_target(cm, 1, 1);
+    spawn_target(cm, 1, 1); // Spawns in a non taken space
 
-    int e0 = 0, skip = 0;
-    int agent_tick = 0;
+    int e0 = 0, skip = 0; //for ps2 keyboard
+    int agent_tick = 0; //how fast to update RL model (speed)
 
     while (1) {
 
-        // ── RL AGENT MOVEMENT + PULSE ANIMATION ──────────────────────────────
-        // Both agent movement and target pulse advance on the same tick
+        // RL AGENT MOVEMENT
         agent_tick++;
-        if (agent_tick >= 100000) {
-            agent_tick = 0;
-
-            // toggle pulse frame and redraw target with new ring style
-            pulse_frame = 1 - pulse_frame;
-            draw_target(target_col, target_row, COL_TGT_OUT);
+        if (agent_tick >= 100000) { //Don't draw and update too frequent
+            agent_tick = 0; //reset count
 
             // get agent's current tile
             int ac = px_to_col(agent_px);
@@ -533,15 +528,17 @@ int main(void) {
             int action = qt_best_action(ac, ar, target_col, target_row, cm);
 
             int nac = ac, nar = ar;
-            if      (action == 0) nar -= 1;   // up
+            if (action == 0) nar -= 1;   // up
             else if (action == 1) nar += 1;   // down
             else if (action == 2) nac -= 1;   // left
             else if (action == 3) nac += 1;   // right
 
+            //check bounds
             if (nac >= 0 && nac < COLS && nar >= 0 && nar < ROWS
                     && maps[cm][nar][nac] == 0) {
-                draw_ball(agent_px, agent_py, BLACK);         // erase old position
-                agent_px = col_to_px(nac);
+        
+                draw_ball(agent_px, agent_py, BLACK);  // erase old position
+                agent_px = col_to_px(nac); //update postiion
                 agent_py = row_to_py(nar);
                 draw_target(target_col, target_row, COL_TGT_OUT);  // redraw target underneath
                 draw_ball(agent_px, agent_py, COL_AGENT);     // draw new position
@@ -554,7 +551,7 @@ int main(void) {
             }
         }
 
-        // ── PLAYER KEYBOARD INPUT ─────────────────────────────────────────────
+        // PLAYER KEYBOARD INPUT 
         // PS2 protocol: 0xF0 = key release prefix, 0xE0 = extended key prefix
         int b;
         while ((b = ps2_read()) >= 0) {
@@ -564,21 +561,23 @@ int main(void) {
 
             int nx = px, ny = py;
             if (e0) {
-                if      (b==0x6B) nx -= SPEED;   // left arrow
+                if (b==0x6B) nx -= SPEED;   // left arrow
                 else if (b==0x74) nx += SPEED;   // right arrow
                 else if (b==0x75) ny -= SPEED;   // up arrow
                 else if (b==0x72) ny += SPEED;   // down arrow
                 e0 = 0;
             } else {
-                if      (b==0x1D) ny -= SPEED;   // W
+                if (b==0x1D) ny -= SPEED;   // W
                 else if (b==0x1B) ny += SPEED;   // S
                 else if (b==0x1C) nx -= SPEED;   // A
                 else if (b==0x23) nx += SPEED;   // D
             }
 
             if (!hits_wall(cm, nx, ny)) {
+                
                 draw_ball(px, py, BLACK);                          // erase player
-                px = nx; py = ny;
+                px = nx; 
+                py = ny;
                 draw_target(target_col, target_row, COL_TGT_OUT); // redraw target
                 draw_ball(agent_px, agent_py, COL_AGENT);          // redraw agent
                 draw_ball(px, py, COL_BALL_OUT);                   // draw player
