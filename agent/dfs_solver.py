@@ -4,7 +4,6 @@
 
 from maze_env import COLS, ROWS
 
-# directions: up, down, left, right
 DC = [0, 0, -1, 1]
 DR = [-1, 1, 0, 0]
 
@@ -29,7 +28,7 @@ def compute_dfs_path(grid, start, target):
                     if dfs(nc, nr):
                         return True
 
-                    path.pop()  # backtrack
+                    path.pop()
 
         return False
 

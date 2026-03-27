@@ -11,21 +11,23 @@ import maze_env
 from maze_env import MAPS, COLS, ROWS, NUM_MAPS, N_ACTIONS
 import json
 
+from dfs_solver import compute_dfs_path
+from astar_solver import compute_astar_path
+
 # ── display settings ──────────────────────────────────────────────────────────
-TILE     = 48          # pixels per tile on screen
+TILE     = 48
 W        = COLS * TILE
 H        = ROWS * TILE
-FPS      = 8           # agent moves per second — lower = easier to watch
+FPS      = 8
 
 # colors
 C_BG        = (10,  10,  20)
 C_WALL      = (60,  80, 120)
 C_WALL_EDGE = (100, 130, 180)
-C_AGENT     = (0,   220, 150)   # green
-C_TARGET    = (0,   200, 255)   # cyan
-C_PATH      = (40,  60,  40)    # faint trail
+C_AGENT     = (0,   220, 150)
+C_TARGET    = (0,   200, 255)
+C_PATH      = (40,  60,  40)
 C_TEXT      = (255, 255, 255)
-C_WIN       = (255, 220,  50)
 
 
 def load_q():
@@ -46,7 +48,11 @@ def best_action(state):
     return int(__import__('numpy').argmax(vals))
 
 
-def draw_maze(screen, grid, path, agent_col, agent_row, target_col, target_row, font, wins, ep, map_idx):
+def random_action():
+    return random.randint(0, N_ACTIONS - 1)
+
+
+def draw_maze(screen, grid, path, agent_col, agent_row, target_col, target_row, font, wins, ep, map_idx, mode):
     screen.fill(C_BG)
 
     for row in range(ROWS):
@@ -56,24 +62,29 @@ def draw_maze(screen, grid, path, agent_col, agent_row, target_col, target_row, 
                 pygame.draw.rect(screen, C_WALL, rect)
                 pygame.draw.rect(screen, C_WALL_EDGE, rect, 2)
             else:
-                # faint path trail
                 if (col, row) in path:
                     pygame.draw.rect(screen, C_PATH, rect)
 
-    # target — pulsing cyan circle
     tx = target_col * TILE + TILE // 2
     ty = target_row * TILE + TILE // 2
     pygame.draw.circle(screen, C_TARGET, (tx, ty), TILE // 3)
     pygame.draw.circle(screen, (255,255,255), (tx, ty), TILE // 6)
 
-    # agent — green circle
     ax = agent_col * TILE + TILE // 2
     ay = agent_row * TILE + TILE // 2
     pygame.draw.circle(screen, C_AGENT, (ax, ay), TILE // 3)
     pygame.draw.circle(screen, (255,255,255), (ax, ay), TILE // 8)
 
-    # HUD
-    txt = font.render(f"Map: {map_idx}   Wins: {wins}   Episode: {ep}", True, C_TEXT)
+    if mode == 1:
+        mode_str = "RL"
+    elif mode == 2:
+        mode_str = "DFS"
+    elif mode == 3:
+        mode_str = "ASTAR"
+    else:
+        mode_str = "RANDOM"
+
+    txt = font.render(f"Mode: {mode_str} | Map: {map_idx}   Wins: {wins}   Episode: {ep}", True, C_TEXT)
     screen.blit(txt, (4, 4))
 
     pygame.display.flip()
@@ -92,12 +103,13 @@ def run():
     wins = 0
     ep   = 0
 
+    mode = 1
+
     while True:
         ep += 1
         map_idx = random.randint(0, NUM_MAPS - 1)
         grid    = MAPS[map_idx]
 
-        # random start and target
         ac, ar = 1, 1
         while True:
             tc = random.randint(1, COLS-2)
@@ -109,6 +121,12 @@ def run():
         steps  = 0
         won    = False
 
+        dfs_path = compute_dfs_path(grid, (ac, ar), (tc, tr))
+        astar_path = compute_astar_path(grid, (ac, ar), (tc, tr))
+
+        dfs_index = 0
+        astar_index = 0
+
         while steps < 300:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -116,12 +134,37 @@ def run():
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         pygame.quit(); return
-                    # press SPACE to skip to next episode
                     if event.key == pygame.K_SPACE:
                         steps = 9999
+                    if event.key == pygame.K_1:
+                        mode = 1
+                    if event.key == pygame.K_2:
+                        mode = 2
+                    if event.key == pygame.K_3:
+                        mode = 3
+                    if event.key == pygame.K_4:
+                        mode = 4
 
-            state  = (ac, ar, tc, tr, map_idx)
-            action = best_action(state)
+            if mode == 1:
+                state  = (ac, ar, tc, tr, map_idx)
+                action = best_action(state)
+
+            elif mode == 2:
+                if dfs_index < len(dfs_path):
+                    action = dfs_path[dfs_index]
+                    dfs_index += 1
+                else:
+                    action = 0
+
+            elif mode == 3:
+                if astar_index < len(astar_path):
+                    action = astar_path[astar_index]
+                    astar_index += 1
+                else:
+                    action = 0
+
+            else:
+                action = random_action()
 
             nac, nar = ac, ar
             if   action == 0: nar -= 1
@@ -133,28 +176,13 @@ def run():
                 path.add((ac, ar))
                 ac, ar = nac, nar
 
-            draw_maze(screen, grid, path, ac, ar, tc, tr, font, wins, ep, map_idx)
+            draw_maze(screen, grid, path, ac, ar, tc, tr, font, wins, ep, map_idx, mode)
             clock.tick(FPS)
             steps += 1
 
             if ac == tc and ar == tr:
                 wins += 1
-                won = True
-                # flash win
-                for _ in range(3):
-                    screen.fill(C_WIN)
-                    pygame.display.flip()
-                    time.sleep(0.1)
-                    draw_maze(screen, grid, path, ac, ar, tc, tr, font, wins, ep, map_idx)
-                    pygame.display.flip()
-                    time.sleep(0.1)
                 break
-
-        if not won:
-            # flash red for timeout
-            screen.fill((80, 0, 0))
-            pygame.display.flip()
-            time.sleep(0.3)
 
         time.sleep(0.3)
 
