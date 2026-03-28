@@ -1,55 +1,10 @@
 // accel_dot.c
 //
 // Moves a dot on VGA based on MPU-9250 accelerometer tilt.
-// Tilt = acceleration, dot builds up speed and bounces off walls.
-//
-// FIXES APPLIED:
-//   1. Enabled MPU-9250's built-in low pass filter (register 0x1D)
-//      — cuts out high frequency noise so readings are stable
-//   2. Read all 6 bytes (X, Y, Z) in one burst — need Z to compute tilt
-//   3. Use proper tilt math (pitch/roll from atan2) instead of raw ax/ay
-//      — raw ax/ay mix in gravity incorrectly and cause drift patterns
-//      — pitch/roll give you the actual angle of tilt regardless of orientation
+// SIMPLE VERSION: raw ax/ay directly control velocity.
+// No angle math, no dead zone — just tilt and it moves.
 
 #include <stdlib.h>
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Integer square root (no floating point, no math.h needed)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// We need sqrt to compute tilt angles without float.
-// This is a simple Newton's method integer square root.
-static int isqrt(int n) {
-    if (n <= 0) return 0;
-    int x = n;
-    int y = 1;
-    while (x > y) { x = (x + y) / 2; y = n / x; }
-    return x;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Integer atan2 approximation — returns value scaled to ±512
-// (replaces floating point atan2 which we can't use easily on bare metal)
-// Input: y, x as raw accelerometer counts
-// Output: roughly proportional to the angle, range ±512
-// ─────────────────────────────────────────────────────────────────────────────
-
-static int iatan2_scaled(int y, int x) {
-    // avoid divide by zero
-    if (x == 0 && y == 0) return 0;
-    // scale down to avoid overflow (values up to 16384)
-    // result is angle * 512 / (pi/2) approximately
-    int ax = x < 0 ? -x : x;
-    int ay = y < 0 ? -y : y;
-    int angle;
-    if (ax >= ay)
-        angle = (512 * ay) / (ax + 1);   // 0..512 range
-    else
-        angle = 512 - (512 * ax) / (ay + 1); // 0..512 range
-    if (x < 0) angle = 1024 - angle;
-    if (y < 0) angle = -angle;
-    return angle;  // roughly ±1024 = ±180 degrees
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VGA / screen constants
@@ -61,11 +16,10 @@ static int iatan2_scaled(int y, int x) {
 #define BLACK   0x0000
 #define CYAN    0x07FF
 
-// pixel buffer — 512 wide because DE1-SoC needs power-of-2 row stride
 short int Buffer1[240][512];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// JP1 GPIO registers (JP1_BASE = 0xFF200060)
+// JP1 GPIO registers
 // ─────────────────────────────────────────────────────────────────────────────
 
 volatile int *jp1_data = (volatile int *)0xFF200060;
@@ -79,9 +33,9 @@ volatile int *jp1_dir  = (volatile int *)0xFF200064;
 // ─────────────────────────────────────────────────────────────────────────────
 
 #define MPU_ADDR         0x68
-#define REG_PWR_MGMT_1   0x6B   // write 0x00 to wake chip
-#define REG_ACCEL_CFG2   0x1D   // accelerometer low pass filter config
-#define REG_ACCEL_XOUT_H 0x3B   // burst read starts here: XH XL YH YL ZH ZL
+#define REG_PWR_MGMT_1   0x6B
+#define REG_ACCEL_CFG2   0x1D   // low pass filter register
+#define REG_ACCEL_XOUT_H 0x3B
 
 // ─────────────────────────────────────────────────────────────────────────────
 // I2C bit-bang
@@ -130,7 +84,7 @@ unsigned char i2c_recv_byte(int ack) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MPU-9250 register write (used for init)
+// MPU-9250 write / init
 // ─────────────────────────────────────────────────────────────────────────────
 
 void mpu_write_reg(unsigned char reg, unsigned char val) {
@@ -141,61 +95,39 @@ void mpu_write_reg(unsigned char reg, unsigned char val) {
     i2c_stop();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MPU-9250 init
-// ─────────────────────────────────────────────────────────────────────────────
-
 void mpu_init() {
-    // release both I2C pins — pull-ups hold them high
     *jp1_dir &= ~((1 << SCL_BIT) | (1 << SDA_BIT));
 
     // wake chip from sleep
     mpu_write_reg(REG_PWR_MGMT_1, 0x00);
 
-    // enable built-in low pass filter on accelerometer
-    // register 0x1D = ACCEL_CONFIG_2
-    // value 0x05 = enable LPF, bandwidth=10Hz — smooths out noise
-    // this stops the "moving in a pattern" behaviour from raw noise
-    // 0x04 = 20Hz (less smooth), 0x06 = 5Hz (very smooth, more lag)
+    // enable hardware low pass filter — smooths noise
+    // 0x05 = 10Hz bandwidth (stable, minimal lag for tilt)
     mpu_write_reg(REG_ACCEL_CFG2, 0x05);
 
-    // let chip stabilize
     volatile int i;
     for (i = 0; i < 1000000; i++);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MPU-9250 burst read — reads X, Y, Z all in ONE transaction (6 bytes)
-//
-// We need Z now because the tilt angle formula requires it:
-//   pitch = atan2(ax, sqrt(ay² + az²))   ← tilt left/right
-//   roll  = atan2(ay, sqrt(ax² + az²))   ← tilt forward/back
-//
-// Without az, using raw ax/ay directly mixes gravity in wrong
-// and gives the "moving in a pattern" problem you saw.
+// Burst read X and Y (4 bytes, one transaction)
 // ─────────────────────────────────────────────────────────────────────────────
 
-void mpu_read_accel(short *ax, short *ay, short *az) {
-    // set register pointer to ACCEL_XOUT_H
+void mpu_read_accel(short *ax, short *ay) {
     i2c_start();
     i2c_send_byte(MPU_ADDR << 1);
-    i2c_send_byte(REG_ACCEL_XOUT_H);
-
-    // repeated start, switch to read, get all 6 bytes
+    i2c_send_byte(REG_ACCEL_XOUT_H);   // start at XH, chip auto-increments
     i2c_start();
     i2c_send_byte((MPU_ADDR << 1) | 1);
 
     unsigned char xh = i2c_recv_byte(1);  // XH — ACK
     unsigned char xl = i2c_recv_byte(1);  // XL — ACK
     unsigned char yh = i2c_recv_byte(1);  // YH — ACK
-    unsigned char yl = i2c_recv_byte(1);  // YL — ACK
-    unsigned char zh = i2c_recv_byte(1);  // ZH — ACK
-    unsigned char zl = i2c_recv_byte(0);  // ZL — NACK (last byte)
+    unsigned char yl = i2c_recv_byte(0);  // YL — NACK (done)
     i2c_stop();
 
     *ax = (short)((xh << 8) | xl);
     *ay = (short)((yh << 8) | yl);
-    *az = (short)((zh << 8) | zl);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -250,61 +182,54 @@ int main(void) {
     int vel_y = 0;
 
     int old_x = 160, old_y = 120;
-    short ax, ay, az;
+    short ax, ay;
 
     while (1) {
-        // ── 1. read all 3 axes in one burst ──────────────────────────────────
-        mpu_read_accel(&ax, &ay, &az);
+        // 1. read accelerometer (burst, both axes one transaction)
+        mpu_read_accel(&ax, &ay);
 
-        // ── 2. compute tilt angles using pitch/roll formula ───────────────────
-        //
-        // pitch = atan2(ax,  sqrt(ay² + az²))  → tilt around Y axis (left/right)
-        // roll  = atan2(ay,  sqrt(ax² + az²))  → tilt around X axis (fwd/back)
-        //
-        // iatan2_scaled returns ±1024 for ±180 degrees
-        // so a gentle 15° tilt ≈ ±85 units out of 1024
-        //
-        // We divide by 8 to convert to velocity units — tune this:
-        //   lower = more sensitive, higher = needs bigger tilt
+        // 2. CALIBRATION STEP:
+        //    Hold the board flat and note what ax/ay read.
+        //    They won't be exactly 0 — subtract that offset here.
+        //    For now set both to 0 and adjust once you see behaviour.
+        int offset_x = 0;   // <-- if dot drifts left/right when flat, put that value here
+        int offset_y = 0;   // <-- if dot drifts up/down when flat, put that value here
 
-        int denom_pitch = isqrt((int)ay*(int)ay + (int)az*(int)az);
-        int denom_roll  = isqrt((int)ax*(int)ax + (int)az*(int)az);
+        int ix = (int)ax - offset_x;
+        int iy = (int)ay - offset_y;
 
-        int pitch = iatan2_scaled((int)ax,  denom_pitch); // left/right tilt
-        int roll  = iatan2_scaled((int)ay,  denom_roll);  // forward/back tilt
+        // 3. raw tilt drives velocity directly
+        //    flat board: ax≈0, ay≈0 → no velocity added
+        //    tilted:     ax or ay changes → velocity builds up
+        //    raise divisor if too twitchy, lower if too sluggish
+        vel_x += ix / 32;
+        vel_y -= iy / 32;   // negate: forward tilt = positive ay = up on screen
 
-        // ── 3. tilt angle drives velocity ─────────────────────────────────────
-        // pitch positive = tilted right → dot moves right (vel_x increases)
-        // roll  positive = tilted forward → dot moves down (vel_y increases)
-        // divide by 8 to scale angle to reasonable velocity — tune this
-        vel_x += pitch / 8;
-        vel_y += roll  / 8;
-
-        // ── 4. friction — slows dot when board is flat ────────────────────────
+        // 4. friction — dot slows when flat
         vel_x = (vel_x * 15) / 16;
         vel_y = (vel_y * 15) / 16;
 
-        // ── 5. cap max speed ──────────────────────────────────────────────────
-        if (vel_x >  96) vel_x =  96;
-        if (vel_x < -96) vel_x = -96;
-        if (vel_y >  96) vel_y =  96;
-        if (vel_y < -96) vel_y = -96;
+        // 5. cap speed
+        if (vel_x >  64) vel_x =  64;
+        if (vel_x < -64) vel_x = -64;
+        if (vel_y >  64) vel_y =  64;
+        if (vel_y < -64) vel_y = -64;
 
-        // ── 6. update position ────────────────────────────────────────────────
+        // 6. move
         pos_x += vel_x;
         pos_y += vel_y;
 
-        // ── 7. bounce off walls ───────────────────────────────────────────────
+        // 7. bounce off walls
         if (pos_x < 8*16)   { pos_x = 8*16;   vel_x = -vel_x / 2; }
         if (pos_x > 311*16) { pos_x = 311*16;  vel_x = -vel_x / 2; }
         if (pos_y < 8*16)   { pos_y = 8*16;    vel_y = -vel_y / 2; }
         if (pos_y > 231*16) { pos_y = 231*16;  vel_y = -vel_y / 2; }
 
-        // ── 8. fixed-point to pixels ──────────────────────────────────────────
+        // 8. fixed-point to pixels
         int dot_x = pos_x / 16;
         int dot_y = pos_y / 16;
 
-        // ── 9. draw ───────────────────────────────────────────────────────────
+        // 9. draw
         fill_circle(old_x, old_y, 8, BLACK);
         fill_circle(dot_x, dot_y, 8, CYAN);
 
