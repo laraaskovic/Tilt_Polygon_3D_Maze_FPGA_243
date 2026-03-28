@@ -1,26 +1,17 @@
 // accel_dot.c
 //
-// Moves a dot on VGA based on MPU-9250 accelerometer tilt.
-// SIMPLE VERSION: raw ax/ay directly control velocity.
-// No angle math, no dead zone — just tilt and it moves.
+// BARE MINIMUM version — just wake the chip and read ax/ay.
+// No LPF, no offsets, no angle math.
+// If tilt doesn't move the dot with this, it's a wiring/I2C issue.
 
 #include <stdlib.h>
 
-// ─────────────────────────────────────────────────────────────────────────────
-// VGA / screen constants
-// ─────────────────────────────────────────────────────────────────────────────
-
 #define SCREEN_W  320
 #define SCREEN_H  240
-
-#define BLACK   0x0000
-#define CYAN    0x07FF
+#define BLACK     0x0000
+#define CYAN      0x07FF
 
 short int Buffer1[240][512];
-
-// ─────────────────────────────────────────────────────────────────────────────
-// JP1 GPIO registers
-// ─────────────────────────────────────────────────────────────────────────────
 
 volatile int *jp1_data = (volatile int *)0xFF200060;
 volatile int *jp1_dir  = (volatile int *)0xFF200064;
@@ -28,18 +19,11 @@ volatile int *jp1_dir  = (volatile int *)0xFF200064;
 #define SCL_BIT  0
 #define SDA_BIT  1
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MPU-9250 registers
-// ─────────────────────────────────────────────────────────────────────────────
-
 #define MPU_ADDR         0x68
 #define REG_PWR_MGMT_1   0x6B
-#define REG_ACCEL_CFG2   0x1D   // low pass filter register
 #define REG_ACCEL_XOUT_H 0x3B
 
-// ─────────────────────────────────────────────────────────────────────────────
-// I2C bit-bang
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── I2C ─────────────────────────────────────────────────────────────────────
 
 void i2c_delay() { volatile int i; for (i = 0; i < 100; i++); }
 
@@ -55,7 +39,7 @@ int sda_read() {
 }
 
 void i2c_start() { sda_high(); scl_high(); sda_low(); scl_low(); }
-void i2c_stop()  { sda_low(); scl_high(); sda_high(); }
+void i2c_stop()  { sda_low();  scl_high(); sda_high(); }
 
 int i2c_send_byte(unsigned char byte) {
     int i;
@@ -83,9 +67,7 @@ unsigned char i2c_recv_byte(int ack) {
     return byte;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MPU-9250 write / init
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── MPU ─────────────────────────────────────────────────────────────────────
 
 void mpu_write_reg(unsigned char reg, unsigned char val) {
     i2c_start();
@@ -96,43 +78,34 @@ void mpu_write_reg(unsigned char reg, unsigned char val) {
 }
 
 void mpu_init() {
+    // release pins
     *jp1_dir &= ~((1 << SCL_BIT) | (1 << SDA_BIT));
 
-    // wake chip from sleep
+    // just wake the chip — nothing else
     mpu_write_reg(REG_PWR_MGMT_1, 0x00);
 
-    // enable hardware low pass filter — smooths noise
-    // 0x05 = 10Hz bandwidth (stable, minimal lag for tilt)
-    mpu_write_reg(REG_ACCEL_CFG2, 0x05);
-
+    // long wait to make sure chip is fully awake
     volatile int i;
-    for (i = 0; i < 1000000; i++);
+    for (i = 0; i < 5000000; i++);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Burst read X and Y (4 bytes, one transaction)
-// ─────────────────────────────────────────────────────────────────────────────
-
+// burst read XH XL YH YL in one transaction
 void mpu_read_accel(short *ax, short *ay) {
     i2c_start();
     i2c_send_byte(MPU_ADDR << 1);
-    i2c_send_byte(REG_ACCEL_XOUT_H);   // start at XH, chip auto-increments
+    i2c_send_byte(REG_ACCEL_XOUT_H);
     i2c_start();
     i2c_send_byte((MPU_ADDR << 1) | 1);
-
-    unsigned char xh = i2c_recv_byte(1);  // XH — ACK
-    unsigned char xl = i2c_recv_byte(1);  // XL — ACK
-    unsigned char yh = i2c_recv_byte(1);  // YH — ACK
-    unsigned char yl = i2c_recv_byte(0);  // YL — NACK (done)
+    unsigned char xh = i2c_recv_byte(1);
+    unsigned char xl = i2c_recv_byte(1);
+    unsigned char yh = i2c_recv_byte(1);
+    unsigned char yl = i2c_recv_byte(0);
     i2c_stop();
-
     *ax = (short)((xh << 8) | xl);
     *ay = (short)((yh << 8) | yl);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// VGA drawing
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── VGA ─────────────────────────────────────────────────────────────────────
 
 void plot_pixel(int x, int y, short color) {
     if (x < 0 || x >= SCREEN_W || y < 0 || y >= SCREEN_H) return;
@@ -160,9 +133,7 @@ void wait_for_vsync() {
     while ((*(ctrl + 3) & 0x01) != 0);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Main
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Main ────────────────────────────────────────────────────────────────────
 
 int main(void) {
     volatile int *pixel_ctrl = (volatile int *)0xFF203020;
@@ -174,62 +145,54 @@ int main(void) {
     clear_screen();
     mpu_init();
 
-    // fixed-point position (*16 for sub-pixel precision)
+    // take a calibration snapshot while flat at startup
+    // this captures whatever offset the chip has at rest
+    // and subtracts it every frame so flat = no movement
+    short cal_x, cal_y;
+    mpu_read_accel(&cal_x, &cal_y);
+
     int pos_x = 160 * 16;
     int pos_y = 120 * 16;
-
     int vel_x = 0;
     int vel_y = 0;
-
     int old_x = 160, old_y = 120;
     short ax, ay;
 
     while (1) {
-        // 1. read accelerometer (burst, both axes one transaction)
         mpu_read_accel(&ax, &ay);
 
-        // 2. CALIBRATION STEP:
-        //    Hold the board flat and note what ax/ay read.
-        //    They won't be exactly 0 — subtract that offset here.
-        //    For now set both to 0 and adjust once you see behaviour.
-        int offset_x = 0;   // <-- if dot drifts left/right when flat, put that value here
-        int offset_y = 0;   // <-- if dot drifts up/down when flat, put that value here
+        // subtract the at-rest calibration reading
+        // so whatever the chip reads when flat = 0
+        // and any tilt from that position drives movement
+        int ix = (int)ax - (int)cal_x;
+        int iy = (int)ay - (int)cal_y;
 
-        int ix = (int)ax - offset_x;
-        int iy = (int)ay - offset_y;
-
-        // 3. raw tilt drives velocity directly
-        //    flat board: ax≈0, ay≈0 → no velocity added
-        //    tilted:     ax or ay changes → velocity builds up
-        //    raise divisor if too twitchy, lower if too sluggish
+        // tilt drives velocity
         vel_x += ix / 32;
-        vel_y -= iy / 32;   // negate: forward tilt = positive ay = up on screen
+        vel_y -= iy / 32;
 
-        // 4. friction — dot slows when flat
+        // friction
         vel_x = (vel_x * 15) / 16;
         vel_y = (vel_y * 15) / 16;
 
-        // 5. cap speed
+        // cap speed
         if (vel_x >  64) vel_x =  64;
         if (vel_x < -64) vel_x = -64;
         if (vel_y >  64) vel_y =  64;
         if (vel_y < -64) vel_y = -64;
 
-        // 6. move
         pos_x += vel_x;
         pos_y += vel_y;
 
-        // 7. bounce off walls
+        // bounce
         if (pos_x < 8*16)   { pos_x = 8*16;   vel_x = -vel_x / 2; }
         if (pos_x > 311*16) { pos_x = 311*16;  vel_x = -vel_x / 2; }
         if (pos_y < 8*16)   { pos_y = 8*16;    vel_y = -vel_y / 2; }
         if (pos_y > 231*16) { pos_y = 231*16;  vel_y = -vel_y / 2; }
 
-        // 8. fixed-point to pixels
         int dot_x = pos_x / 16;
         int dot_y = pos_y / 16;
 
-        // 9. draw
         fill_circle(old_x, old_y, 8, BLACK);
         fill_circle(dot_x, dot_y, 8, CYAN);
 
