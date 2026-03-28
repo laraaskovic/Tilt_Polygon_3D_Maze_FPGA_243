@@ -3,12 +3,53 @@
 // Moves a dot on VGA based on MPU-9250 accelerometer tilt.
 // Tilt = acceleration, dot builds up speed and bounces off walls.
 //
-// KEY FIX: accelerometer X and Y are now read in one burst transaction
-// instead of 4 separate reads. This ensures XH/XL/YH/YL all come from
-// the same sample — previously the chip could update between reads and
-// give you corrupted values.
+// FIXES APPLIED:
+//   1. Enabled MPU-9250's built-in low pass filter (register 0x1D)
+//      — cuts out high frequency noise so readings are stable
+//   2. Read all 6 bytes (X, Y, Z) in one burst — need Z to compute tilt
+//   3. Use proper tilt math (pitch/roll from atan2) instead of raw ax/ay
+//      — raw ax/ay mix in gravity incorrectly and cause drift patterns
+//      — pitch/roll give you the actual angle of tilt regardless of orientation
 
 #include <stdlib.h>
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Integer square root (no floating point, no math.h needed)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// We need sqrt to compute tilt angles without float.
+// This is a simple Newton's method integer square root.
+static int isqrt(int n) {
+    if (n <= 0) return 0;
+    int x = n;
+    int y = 1;
+    while (x > y) { x = (x + y) / 2; y = n / x; }
+    return x;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Integer atan2 approximation — returns value scaled to ±512
+// (replaces floating point atan2 which we can't use easily on bare metal)
+// Input: y, x as raw accelerometer counts
+// Output: roughly proportional to the angle, range ±512
+// ─────────────────────────────────────────────────────────────────────────────
+
+static int iatan2_scaled(int y, int x) {
+    // avoid divide by zero
+    if (x == 0 && y == 0) return 0;
+    // scale down to avoid overflow (values up to 16384)
+    // result is angle * 512 / (pi/2) approximately
+    int ax = x < 0 ? -x : x;
+    int ay = y < 0 ? -y : y;
+    int angle;
+    if (ax >= ay)
+        angle = (512 * ay) / (ax + 1);   // 0..512 range
+    else
+        angle = 512 - (512 * ax) / (ay + 1); // 0..512 range
+    if (x < 0) angle = 1024 - angle;
+    if (y < 0) angle = -angle;
+    return angle;  // roughly ±1024 = ±180 degrees
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VGA / screen constants
@@ -30,48 +71,38 @@ short int Buffer1[240][512];
 volatile int *jp1_data = (volatile int *)0xFF200060;
 volatile int *jp1_dir  = (volatile int *)0xFF200064;
 
-#define SCL_BIT  0   // GPIO bit 0 = SCL wire
-#define SDA_BIT  1   // GPIO bit 1 = SDA wire
+#define SCL_BIT  0
+#define SDA_BIT  1
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MPU-9250 I2C address and registers
+// MPU-9250 registers
 // ─────────────────────────────────────────────────────────────────────────────
 
-// AD0 tied to GND → address 0x68
 #define MPU_ADDR         0x68
-
-#define REG_PWR_MGMT_1   0x6B   // write 0x00 to wake chip from sleep
-#define REG_ACCEL_XOUT_H 0x3B   // burst read starts here: XH, XL, YH, YL
-#define REG_ACCEL_XOUT_L 0x3C
-#define REG_ACCEL_YOUT_H 0x3D
-#define REG_ACCEL_YOUT_L 0x3E
+#define REG_PWR_MGMT_1   0x6B   // write 0x00 to wake chip
+#define REG_ACCEL_CFG2   0x1D   // accelerometer low pass filter config
+#define REG_ACCEL_XOUT_H 0x3B   // burst read starts here: XH XL YH YL ZH ZL
 
 // ─────────────────────────────────────────────────────────────────────────────
-// I2C bit-bang — pin wiggling
+// I2C bit-bang
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Delay between pin changes — increase to 500 if getting garbage reads
 void i2c_delay() { volatile int i; for (i = 0; i < 100; i++); }
 
-// I2C is open-drain: never drive HIGH, just release and let pull-up do it
 void scl_high() { *jp1_dir &= ~(1 << SCL_BIT); i2c_delay(); }
 void scl_low()  { *jp1_data &= ~(1 << SCL_BIT); *jp1_dir |= (1 << SCL_BIT); i2c_delay(); }
 void sda_high() { *jp1_dir &= ~(1 << SDA_BIT); i2c_delay(); }
 void sda_low()  { *jp1_data &= ~(1 << SDA_BIT); *jp1_dir |= (1 << SDA_BIT); i2c_delay(); }
 
 int sda_read() {
-    *jp1_dir &= ~(1 << SDA_BIT);  // release so slave can drive it
+    *jp1_dir &= ~(1 << SDA_BIT);
     i2c_delay();
     return (*jp1_data >> SDA_BIT) & 1;
 }
 
-// START: SDA falls while SCL is high
 void i2c_start() { sda_high(); scl_high(); sda_low(); scl_low(); }
-
-// STOP: SDA rises while SCL is high
 void i2c_stop()  { sda_low(); scl_high(); sda_high(); }
 
-// Send 8 bits MSB first, return 0=ACK (good) 1=NACK (bad)
 int i2c_send_byte(unsigned char byte) {
     int i;
     for (i = 7; i >= 0; i--) {
@@ -84,11 +115,10 @@ int i2c_send_byte(unsigned char byte) {
     return nack;
 }
 
-// Read 8 bits. ack=1 means "send ACK, keep going". ack=0 means "NACK, last byte"
 unsigned char i2c_recv_byte(int ack) {
     unsigned char byte = 0;
     int i;
-    sda_high();  // release SDA so slave can drive it
+    sda_high();
     for (i = 7; i >= 0; i--) {
         scl_high();
         if (sda_read()) byte |= (1 << i);
@@ -100,12 +130,12 @@ unsigned char i2c_recv_byte(int ack) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MPU-9250 single register write/read (used for init only)
+// MPU-9250 register write (used for init)
 // ─────────────────────────────────────────────────────────────────────────────
 
 void mpu_write_reg(unsigned char reg, unsigned char val) {
     i2c_start();
-    i2c_send_byte(MPU_ADDR << 1);  // address + WRITE
+    i2c_send_byte(MPU_ADDR << 1);
     i2c_send_byte(reg);
     i2c_send_byte(val);
     i2c_stop();
@@ -116,57 +146,56 @@ void mpu_write_reg(unsigned char reg, unsigned char val) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void mpu_init() {
-    // release both pins — pull-ups will hold them high
+    // release both I2C pins — pull-ups hold them high
     *jp1_dir &= ~((1 << SCL_BIT) | (1 << SDA_BIT));
 
-    // chip boots in sleep mode — write 0 to PWR_MGMT_1 to wake it
+    // wake chip from sleep
     mpu_write_reg(REG_PWR_MGMT_1, 0x00);
 
-    // let chip stabilize after waking
+    // enable built-in low pass filter on accelerometer
+    // register 0x1D = ACCEL_CONFIG_2
+    // value 0x05 = enable LPF, bandwidth=10Hz — smooths out noise
+    // this stops the "moving in a pattern" behaviour from raw noise
+    // 0x04 = 20Hz (less smooth), 0x06 = 5Hz (very smooth, more lag)
+    mpu_write_reg(REG_ACCEL_CFG2, 0x05);
+
+    // let chip stabilize
     volatile int i;
     for (i = 0; i < 1000000; i++);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MPU-9250 burst read — reads XH, XL, YH, YL in ONE transaction
+// MPU-9250 burst read — reads X, Y, Z all in ONE transaction (6 bytes)
 //
-// WHY THIS MATTERS:
-//   The chip updates all accel registers at the same time (one snapshot).
-//   If you read each byte in a separate I2C transaction, the chip can
-//   update between reads — XH comes from sample N, XL from sample N+1.
-//   That gives you a garbage 16-bit value.
+// We need Z now because the tilt angle formula requires it:
+//   pitch = atan2(ax, sqrt(ay² + az²))   ← tilt left/right
+//   roll  = atan2(ay, sqrt(ax² + az²))   ← tilt forward/back
 //
-//   Burst read sets the register pointer once at ACCEL_XOUT_H, then
-//   reads all 4 bytes without releasing the bus. The chip auto-increments
-//   its pointer after each byte, so you get XH→XL→YH→YL all from the
-//   same snapshot.
-//
-//   ACK after each byte except the last (NACK tells chip we're done).
+// Without az, using raw ax/ay directly mixes gravity in wrong
+// and gives the "moving in a pattern" problem you saw.
 // ─────────────────────────────────────────────────────────────────────────────
 
-void mpu_read_accel(short *ax, short *ay) {
-    // phase 1: write mode — tell chip which register to start from
+void mpu_read_accel(short *ax, short *ay, short *az) {
+    // set register pointer to ACCEL_XOUT_H
     i2c_start();
-    i2c_send_byte(MPU_ADDR << 1);       // address + WRITE (bit0=0)
-    i2c_send_byte(REG_ACCEL_XOUT_H);    // start at XH — chip will auto-increment
+    i2c_send_byte(MPU_ADDR << 1);
+    i2c_send_byte(REG_ACCEL_XOUT_H);
 
-    // phase 2: repeated START, switch to read mode
+    // repeated start, switch to read, get all 6 bytes
     i2c_start();
-    i2c_send_byte((MPU_ADDR << 1) | 1); // address + READ (bit0=1)
+    i2c_send_byte((MPU_ADDR << 1) | 1);
 
-    // read all 4 bytes in one go — ACK each except the last
-    unsigned char xh = i2c_recv_byte(1);  // ACCEL_XOUT_H — ACK, more coming
-    unsigned char xl = i2c_recv_byte(1);  // ACCEL_XOUT_L — ACK, more coming
-    unsigned char yh = i2c_recv_byte(1);  // ACCEL_YOUT_H — ACK, more coming
-    unsigned char yl = i2c_recv_byte(0);  // ACCEL_YOUT_L — NACK, we're done
+    unsigned char xh = i2c_recv_byte(1);  // XH — ACK
+    unsigned char xl = i2c_recv_byte(1);  // XL — ACK
+    unsigned char yh = i2c_recv_byte(1);  // YH — ACK
+    unsigned char yl = i2c_recv_byte(1);  // YL — ACK
+    unsigned char zh = i2c_recv_byte(1);  // ZH — ACK
+    unsigned char zl = i2c_recv_byte(0);  // ZL — NACK (last byte)
     i2c_stop();
 
-    // combine high and low bytes into signed 16-bit values
-    // flat on table: ax≈0, ay≈0
-    // tilted 90°:    ax or ay ≈ ±16384
-    // gentle tilt:   roughly ±200 to ±4000 depending on angle
     *ax = (short)((xh << 8) | xl);
     *ay = (short)((yh << 8) | yl);
+    *az = (short)((zh << 8) | zl);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -213,60 +242,69 @@ int main(void) {
     clear_screen();
     mpu_init();
 
-    // position stored in fixed-point (*16) for sub-pixel precision
-    // without this, small velocities get truncated to 0 by integer division
+    // fixed-point position (*16 for sub-pixel precision)
     int pos_x = 160 * 16;
     int pos_y = 120 * 16;
 
-    // velocity accumulates each frame based on tilt
     int vel_x = 0;
     int vel_y = 0;
 
     int old_x = 160, old_y = 120;
-    short ax, ay;
+    short ax, ay, az;
 
     while (1) {
-        // ── 1. read accelerometer (burst read, all 4 bytes one transaction) ──
-        mpu_read_accel(&ax, &ay);
+        // ── 1. read all 3 axes in one burst ──────────────────────────────────
+        mpu_read_accel(&ax, &ay, &az);
 
-        // ── 2. tilt → acceleration ───────────────────────────────────────────
-        // ax/ay are ±16384 at full 1g tilt
-        // dividing by 32 maps a gentle tilt (~1000 counts) to ~31 units/frame
-        // raise divisor (64, 128) if too twitchy
-        // lower divisor (16) if too sluggish
-        vel_x += (int)ax / 32;
-        vel_y -= (int)ay / 32;  // negate: forward tilt = positive ay = up on screen
+        // ── 2. compute tilt angles using pitch/roll formula ───────────────────
+        //
+        // pitch = atan2(ax,  sqrt(ay² + az²))  → tilt around Y axis (left/right)
+        // roll  = atan2(ay,  sqrt(ax² + az²))  → tilt around X axis (fwd/back)
+        //
+        // iatan2_scaled returns ±1024 for ±180 degrees
+        // so a gentle 15° tilt ≈ ±85 units out of 1024
+        //
+        // We divide by 8 to convert to velocity units — tune this:
+        //   lower = more sensitive, higher = needs bigger tilt
 
-        // ── 3. friction ───────────────────────────────────────────────────────
-        // multiplies velocity by 15/16 = 0.9375 each frame
-        // dot gradually slows when board is flat
-        // change 15→14 for more damping, 15→16 for no friction (ice)
+        int denom_pitch = isqrt((int)ay*(int)ay + (int)az*(int)az);
+        int denom_roll  = isqrt((int)ax*(int)ax + (int)az*(int)az);
+
+        int pitch = iatan2_scaled((int)ax,  denom_pitch); // left/right tilt
+        int roll  = iatan2_scaled((int)ay,  denom_roll);  // forward/back tilt
+
+        // ── 3. tilt angle drives velocity ─────────────────────────────────────
+        // pitch positive = tilted right → dot moves right (vel_x increases)
+        // roll  positive = tilted forward → dot moves down (vel_y increases)
+        // divide by 8 to scale angle to reasonable velocity — tune this
+        vel_x += pitch / 8;
+        vel_y += roll  / 8;
+
+        // ── 4. friction — slows dot when board is flat ────────────────────────
         vel_x = (vel_x * 15) / 16;
         vel_y = (vel_y * 15) / 16;
 
-        // ── 4. cap max speed ──────────────────────────────────────────────────
-        // 96 fixed-point units = 6 pixels/frame max
-        // raise if you want faster movement
+        // ── 5. cap max speed ──────────────────────────────────────────────────
         if (vel_x >  96) vel_x =  96;
         if (vel_x < -96) vel_x = -96;
         if (vel_y >  96) vel_y =  96;
         if (vel_y < -96) vel_y = -96;
 
-        // ── 5. update position ────────────────────────────────────────────────
+        // ── 6. update position ────────────────────────────────────────────────
         pos_x += vel_x;
         pos_y += vel_y;
 
-        // ── 6. bounce off walls with half velocity ────────────────────────────
+        // ── 7. bounce off walls ───────────────────────────────────────────────
         if (pos_x < 8*16)   { pos_x = 8*16;   vel_x = -vel_x / 2; }
         if (pos_x > 311*16) { pos_x = 311*16;  vel_x = -vel_x / 2; }
         if (pos_y < 8*16)   { pos_y = 8*16;    vel_y = -vel_y / 2; }
         if (pos_y > 231*16) { pos_y = 231*16;  vel_y = -vel_y / 2; }
 
-        // ── 7. convert fixed-point back to screen pixels ──────────────────────
+        // ── 8. fixed-point to pixels ──────────────────────────────────────────
         int dot_x = pos_x / 16;
         int dot_y = pos_y / 16;
 
-        // ── 8. erase old position, draw new ──────────────────────────────────
+        // ── 9. draw ───────────────────────────────────────────────────────────
         fill_circle(old_x, old_y, 8, BLACK);
         fill_circle(dot_x, dot_y, 8, CYAN);
 
