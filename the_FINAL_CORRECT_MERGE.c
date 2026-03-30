@@ -63,11 +63,6 @@ int dfs_len = 0;
 int dfs_index = 0;
 
 
-// Physics
-int vel_x = 0;
-int vel_y = 0;
-int phys_tick = 0;
-
 
 // 3D rendering constants
 #define CAMERA_DISTANCE 135
@@ -944,10 +939,11 @@ int ps2_read() {
 
 void reset_round(int *cm, int *px, int *py) {
     *cm = rand() % NUM_MAPS;
-    draw_map(*cm, prev_tilt);  // clear with CURRENT tilt, not 'n'
+    draw_map(*cm, prev_tilt); 
 
     *px = col_to_px(1);
     *py = row_to_py(1);
+
     agent_px = col_to_px(2);
     agent_py = row_to_py(1);
 
@@ -982,7 +978,9 @@ int main(void) {
     // RL agent starts at tile (2,1), one tile right of player
     agent_px = col_to_px(2);
     agent_py = row_to_py(1);
-    draw_ball(agent_px, agent_py, COL_AGENT, prev_tilt);
+
+    if (game_mode != MODE_FREE)
+        draw_ball(agent_px, agent_py, COL_AGENT, prev_tilt);
 
     spawn_target(cm, 1, 1); // Spawns in a non taken space
 
@@ -1038,7 +1036,10 @@ int main(void) {
                     agent_py = row_to_py(nar);
 
                     draw_target(target_col, target_row, COL_TARGET);
-                    draw_ball(agent_px, agent_py, COL_AGENT, prev_tilt);
+
+                    if (game_mode != MODE_FREE)
+                        draw_ball(agent_px, agent_py, COL_AGENT, prev_tilt);
+
                 }
 
                 if (reached_target(agent_px, agent_py, target_col, target_row)) {
@@ -1061,77 +1062,82 @@ int main(void) {
 
             // MODE SWITCH KEYS (check first before player movement)
             if (!e0) {
-                if (b == 0x45) { // '0'
+                if (b == 0x45) {  // '0' — free/player only
+                    game_mode = MODE_FREE;
+                    dfs_index = dfs_len = 0;
+                    draw_map(cm, prev_tilt);
+                    draw_target(target_col, target_row, COL_TARGET);
+                    draw_ball(px, py, COL_PLAYER, prev_tilt);
+                }
+                else if (b == 0x16) {  // '1' — random
                     game_mode = MODE_RANDOM;
                     dfs_index = dfs_len = 0;
-
                     draw_map(cm, prev_tilt);
                     draw_target(target_col, target_row, COL_TARGET);
-                    draw_ball(agent_px, agent_py, COL_AGENT, prev_tilt);
+                    if (game_mode != MODE_FREE)
+                        draw_ball(agent_px, agent_py, COL_AGENT, prev_tilt);
                     draw_ball(px, py, COL_PLAYER, prev_tilt);
-
                 }
-                else if (b == 0x16) { // '1'
+                else if (b == 0x1E) {  // '2' — DFS
                     game_mode = MODE_DFS;
                     dfs_index = dfs_len = 0;
-
                     draw_map(cm, prev_tilt);
                     draw_target(target_col, target_row, COL_TARGET);
-                    draw_ball(agent_px, agent_py, COL_AGENT, prev_tilt);
+                    if (game_mode != MODE_FREE)
+                        draw_ball(agent_px, agent_py, COL_AGENT, prev_tilt);
                     draw_ball(px, py, COL_PLAYER, prev_tilt);
-
                 }
-                else if (b == 0x1E) { // '2'
+                else if (b == 0x26) {  // '3' — RL
                     game_mode = MODE_RL;
                     dfs_index = dfs_len = 0;
-
                     draw_map(cm, prev_tilt);
                     draw_target(target_col, target_row, COL_TARGET);
-                    draw_ball(agent_px, agent_py, COL_AGENT, prev_tilt);
+                    if (game_mode != MODE_FREE)
+                        draw_ball(agent_px, agent_py, COL_AGENT, prev_tilt);
                     draw_ball(px, py, COL_PLAYER, prev_tilt);
-
                 }
             }
 
+            int nx = px, ny = py;
+
             if (e0) {
-                if      (b==0x6B) { vel_x=-SPEED; vel_y=0; if(prev_tilt!='l'){draw_map(cm,'l');} prev_tilt='l'; }
-                else if (b==0x74) { vel_x= SPEED; vel_y=0; if(prev_tilt!='r'){draw_map(cm,'r');} prev_tilt='r'; }
-                else if (b==0x75) { vel_y=-SPEED; vel_x=0; if(prev_tilt!='u'){draw_map(cm,'u');} prev_tilt='u'; }
-                else if (b==0x72) { vel_y= SPEED; vel_x=0; if(prev_tilt!='d'){draw_map(cm,'d');} prev_tilt='d'; }
+                if (b==0x6B) { nx -= SPEED; if (prev_tilt!='l') draw_map(cm,'l'); prev_tilt='l'; }
+                else if (b==0x74) { nx += SPEED; if (prev_tilt!='r') draw_map(cm,'r'); prev_tilt='r'; }
+                else if (b==0x75) { ny -= SPEED; if (prev_tilt!='u') draw_map(cm,'u'); prev_tilt='u'; }
+                else if (b==0x72) { ny += SPEED; if (prev_tilt!='d') draw_map(cm,'d'); prev_tilt='d'; }
                 e0 = 0;
             } else {
-                if      (b==0x1C) { vel_x=-SPEED; vel_y=0; if(prev_tilt!='l'){draw_map(cm,'l');} prev_tilt='l'; }
-                else if (b==0x23) { vel_x= SPEED; vel_y=0; if(prev_tilt!='r'){draw_map(cm,'r');} prev_tilt='r'; }
-                else if (b==0x1D) { vel_y=-SPEED; vel_x=0; if(prev_tilt!='u'){draw_map(cm,'u');} prev_tilt='u'; }
-                else if (b==0x1B) { vel_y= SPEED; vel_x=0; if(prev_tilt!='d'){draw_map(cm,'d');} prev_tilt='d'; }
+                if (b==0x1D) { ny -= SPEED; if (prev_tilt!='u') draw_map(cm,'u'); prev_tilt='u'; }
+                else if (b==0x1B) { ny += SPEED; if (prev_tilt!='d') draw_map(cm,'d'); prev_tilt='d'; }
+                else if (b==0x1C) { nx -= SPEED; if (prev_tilt!='l') draw_map(cm,'l'); prev_tilt='l'; }
+                else if (b==0x23) { nx += SPEED; if (prev_tilt!='r') draw_map(cm,'r'); prev_tilt='r'; }
             }
 
             draw_target(target_col, target_row, COL_TARGET);
-            draw_ball(agent_px, agent_py, COL_AGENT, prev_tilt);
+
+            if (game_mode != MODE_FREE)
+                draw_ball(agent_px, agent_py, COL_AGENT, prev_tilt);
+
             draw_ball(px, py, COL_PLAYER, prev_tilt);
-        }
-                
-        phys_tick++;
-        if (phys_tick >= 80000) {
-            phys_tick = 0;
 
-            int nx = px + vel_x;
-            int ny = py + vel_y;
+            if (!hits_wall(cm, nx, ny)) {
+                draw_ball(px, py, BLACK, prev_tilt);
+                px = nx; 
+                py = ny;
 
-            draw_ball(px, py, BLACK, prev_tilt);
+                draw_target(target_col, target_row, COL_TARGET);
 
-            if (!hits_wall(cm, nx, py)) px = nx;
-            if (!hits_wall(cm, px, ny)) py = ny;
+                if (game_mode != MODE_FREE)
+                    draw_ball(agent_px, agent_py, COL_AGENT, prev_tilt);
 
-            draw_target(target_col, target_row, COL_TARGET);
-            draw_ball(agent_px, agent_py, COL_AGENT, prev_tilt);
-            draw_ball(px, py, COL_PLAYER, prev_tilt);
+
+                draw_ball(px, py, COL_PLAYER, prev_tilt);
+            }
 
             if (reached_target(px, py, target_col, target_row)) {
                 playerScore++;
                 reset_round(&cm, &px, &py);
                 dfs_index = dfs_len = 0;
-                vel_x = vel_y = 0;
             }
         }
     }
