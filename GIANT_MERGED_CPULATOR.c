@@ -21209,8 +21209,8 @@ void reset_round(int *cm, int *px, int *py) {
 
     dfs_len = 0;
     dfs_index = 0;
-    spawn_target(*cm, 1, 1);
 	prev_tilt = 'u';
+    spawn_target(*cm, 1, 1);
 
 }
 
@@ -21440,9 +21440,9 @@ int main(void) {
                 trigger_clip(snd_target, snd_target_len);
 
                 ballSpeed=0;
+                prev_tilt = 'n';
                 reset_round(&cm, &px, &py);
                 agent_tick = 0;
-                prev_tilt = 'n';
                 dfs_index = dfs_len = 0;
 
             } 
