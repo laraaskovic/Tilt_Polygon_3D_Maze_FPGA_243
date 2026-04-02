@@ -20690,7 +20690,7 @@ void spawn_target(int m, int bc, int br) {
 // ----------------------------------
 // ── Warp holes ────────────────────────────────────────────────────────────
 #define PORTAL_RADIUS  6
-#define PORTAL_LIFETIME 300   // in phys_ticks (~3 seconds at tick>=500)
+#define PORTAL_LIFETIME 500   // in phys_ticks (~3 seconds at tick>=500)
 
 typedef struct {
     int col_a, row_a;   // entry hole
@@ -20701,7 +20701,7 @@ typedef struct {
 
 Portal portal = {0};
 int portal_spawn_timer = 0;
-#define PORTAL_SPAWN_INTERVAL 600  // ticks between spawns
+#define PORTAL_SPAWN_INTERVAL 300  // ticks between spawns
 
 
 void draw_portal(int col, int row, short color) {
