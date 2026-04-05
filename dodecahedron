@@ -389,6 +389,16 @@ void wait_for_vsync(void) {
 // main game loop
 // ────────────────────────────────────────────────────────────────────────────
 
+//State 0: Main Screen
+//State 1: MENU (play)
+//State 2: MENU (tutotial)
+//State 3: How to play
+//State 4: Game
+//State 5: Game over
+
+
+int state = 0;
+
 int main(void) {
     volatile int *ctrl = (int *)0xFF203020;
 
