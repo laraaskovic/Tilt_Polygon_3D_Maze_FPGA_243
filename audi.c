@@ -163,7 +163,7 @@ typedef struct {
 static int accel_cooldown = 0;
 
 
-void i2c_delay(void) { volatile int i; for (i = 0; i < 200; i++) update_audio(); }
+void i2c_delay(void) { volatile int i; for (i = 0; i < 1000; i++) update_audio(); }
 void sda_high(GPIO_t *g) { g->DDR  &= ~(1 << SDA_PIN); }
 void sda_low (GPIO_t *g) { g->DATA &= ~(1 << SDA_PIN); g->DDR |= (1 << SDA_PIN); }
 int  sda_read(GPIO_t *g) { g->DDR  &= ~(1 << SDA_PIN); i2c_delay(); return (g->DATA >> SDA_PIN) & 1; }
