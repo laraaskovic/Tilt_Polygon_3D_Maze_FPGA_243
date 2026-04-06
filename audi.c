@@ -365,8 +365,8 @@ void line(int x0, int y0, int x1, int y1, short color) {
 
 void clear(short color) {
 	for(int y = 0; y < 240; y++){
+        update_audio();
         for(int x = 0; x < 320; x++){
-            update_audio();
             plot_pixel(x,y,color);
         }
     }
@@ -944,7 +944,6 @@ void drawBox(int x, int y, int z, short color) {
     line(box.fbr.x,box.fbr.y, box.fbl.x,box.fbl.y, color);
     line(box.fbl.x,box.fbl.y, box.ftl.x,box.ftl.y, color);
 
-    update_audio();
     // back edges — only draw visible ones
     if(y<0) line(box.btl.x,box.btl.y, box.btr.x,box.btr.y, color);
     if(x<0) line(box.btr.x,box.btr.y, box.bbr.x,box.bbr.y, color);
@@ -952,7 +951,6 @@ void drawBox(int x, int y, int z, short color) {
     if(x>0) line(box.bbl.x,box.bbl.y, box.btl.x,box.btl.y, color);
 
     // connecting edges front-to-back
-    update_audio();
     if((y<0)||(x>0)) line(box.ftl.x,box.ftl.y, box.btl.x,box.btl.y, color);
     if((y<0)||(x<0)) line(box.ftr.x,box.ftr.y, box.btr.x,box.btr.y, color);
     if((y>0)||(x>0)) line(box.fbl.x,box.fbl.y, box.bbl.x,box.bbl.y, color);
@@ -1640,7 +1638,9 @@ int reached_target(int px, int py, int target_col, int target_row) {
 void wait_for_vsync(void) {
     volatile int *ctrl = (int *)0xFF203020;
     *ctrl = 1;
-    while ((*(ctrl+3) & 0x01) != 0);
+    while ((*(ctrl+3) & 0x01) != 0){
+        update_audio();
+    }
 }
 
 volatile int *ps2 = (volatile int *)0xFF200100;
@@ -1663,6 +1663,7 @@ void draw_ring(int radius, short color) {
     int cx = 160, cy = 120;
     for (int y = 0; y < 240; y++)
         for (int x = 0; x < 320; x++) {
+            update_audio();
             int dx = x - cx, dy = y - cy;
             if (dx*dx + dy*dy <= radius*radius)
                 plot_pixel(x, y, color);
