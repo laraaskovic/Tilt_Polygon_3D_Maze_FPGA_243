@@ -2112,12 +2112,12 @@ int main(void) {
             if (abs_ax > TILT_THRESHOLD || abs_ay > TILT_THRESHOLD) {
                 if (abs_ax >= abs_ay) {
                     // X axis dominant
-                    if (ax > 0) { new_tilt = 'l'; nx-=5; }
-                    else        { new_tilt = 'r'; nx+=5; }
+                    if (ax > 0) { new_tilt = 'l'; }
+                    else        { new_tilt = 'r'; }
                 } else {
                     // Y axis dominant
-                    if (ay > 0) { new_tilt = 'd'; ny+=5; }
-                    else        { new_tilt = 'u'; ny-=5; }
+                    if (ay > 0) { new_tilt = 'd'; }
+                    else        { new_tilt = 'u'; }
                 }
 
                 if (new_tilt != prev_tilt) {
