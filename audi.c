@@ -77,8 +77,9 @@ int dfs_index = 0;
 
 //State 0: Main Menu
 //State 1: Game
-//State 2: How to play
-//State 3: Game Over
+//State 2: Pause
+//State 3: How to play
+//State 4: Game Over
 int gameState = 0;
 
 
@@ -2165,6 +2166,7 @@ int main(void) {
             plot_logo();
             plot_movement();
             plot_diff();
+            plot_back();
         }
         
 
@@ -2179,13 +2181,23 @@ int main(void) {
             if (b == 0xF0) { skip=1; continue; }    // next byte is a key release
             if (b == 0xE0) { e0=1;   continue; }    // next byte is extended key			
 			
-            if(b==0x29) {
+            if(b==0x29) { //space
                 if(gameState==0) {
                     gameState = 1;
-                }else if (gameState == 2) {
+                }else if (gameState == 2){
                     gameState = 0;
-                } if (gameState ==3) {
+                }else if (gameState == 3) {
                     gameState = 0;
+                }else if (gameState ==4) {
+                    gameState = 0;
+                }
+            }
+
+            if (b==0x4D) {//P
+                if(gameState == 1) {
+                    gameState = 2;
+                } else if (gameState ==2) {
+                    gameState = 1;
                 }
             }
 
@@ -2210,7 +2222,7 @@ int main(void) {
                             draw_ball(agent_px, agent_py, COL_AGENT, prev_tilt);
                         draw_ball(px, py, COL_PLAYER, prev_tilt);
                     }
-                    if(gameState ==0) {gameState =2;}
+                    if(gameState ==0) {gameState =3;}
                 }
                 else if (b == 0x1E) {  // '2' — DFS
                     if (gameState==1){
