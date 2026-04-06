@@ -877,7 +877,15 @@ int col_to_px(int col) { return 3*col*TILE -260; }
 int row_to_py(int row) { return 3*row*TILE -270; }
 
 int get_z_from_xy(int px, int py, char tilt) {
-	return GLOBAL_Z;
+	int htilt=0;
+	int vtilt=0;
+	
+	if (tilt == 'l') htilt=1; //left
+	if (tilt == 'r') htilt=-1; //right
+	if (tilt == 'u') vtilt=1; //up
+	if (tilt == 'd') vtilt=-1; //down
+	if (tilt == 'n') {} //no button clicked
+	return GLOBAL_Z + (((px*htilt)/TILT_DAMPER) + ((py*vtilt)/TILT_DAMPER));
 }
 
 
@@ -890,17 +898,6 @@ struct BoxPoints {
 };
 
 struct TwoDPoint projectPoint(int x, int y, int z) {
-    int htilt=0;
-	int vtilt=0;
-	
-	if (prev_tilt == 'l') htilt=1; //left
-	if (prev_tilt == 'r') htilt=-1; //right
-	if (prev_tilt == 'u') vtilt=1; //up
-	if (prev_tilt == 'd') vtilt=-1; //down
-	if (prev_tilt == 'n') {} //no button clicked
-
-    z += (((x*htilt)/TILT_DAMPER) + ((y*vtilt)/TILT_DAMPER));
-
     struct TwoDPoint p;
     int d = CAMERA_DISTANCE;
     p.x = (-(x)*d)/(z-d)+160;
