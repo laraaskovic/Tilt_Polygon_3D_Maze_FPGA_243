@@ -364,8 +364,8 @@ void line(int x0, int y0, int x1, int y1, short color) {
 
 void clear(short color) {
 	for(int x = 0; x < 320; x++){
-        update_audio();
         for(int y = 0; y < 240; y++){
+            update_audio();
             plot_pixel(x,y,color);
         }
     }
@@ -1824,8 +1824,10 @@ void draw_map(int m, char tilt) {
 
     for (int row = 0; row < ROWS; row++)
         for (int col = 0; col < COLS; col++)
-            if (maps[m][row][col] == 1)
+            if (maps[m][row][col] == 1){
+                update_audio();
                 draw_wall_tile(col, row, tilt);
+            }
 
     if (portal.active) draw_portals();
 
