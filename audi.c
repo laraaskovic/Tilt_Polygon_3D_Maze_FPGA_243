@@ -1662,7 +1662,7 @@ void draw_ring(int radius, short color) {
         for (int x = 0; x < 320; x++) {
             int dx = x - cx, dy = y - cy;
             if (dx*dx + dy*dy <= radius*radius)
-                Buffer1[y][x] = color;
+                plot_pixel(x, y, color);
         }
 }
 
@@ -1673,7 +1673,7 @@ void draw_ring_band(int inner, int outer, short color) {
             int dx = x - cx, dy = y - cy;
             int d2 = dx*dx + dy*dy;
             if (d2 <= outer*outer && d2 >= inner*inner)
-                Buffer1[y][x] = color;
+                plot_pixel(x, y, color);
         }
 }
 
@@ -1786,9 +1786,7 @@ void show_game_over_screen(void) {
 // clear screen and redraw all wall tiles for map m
 void draw_map(int m, char tilt) {
 	
-    for (int y = 0; y < SCREEN_H; y++)
-        for (int x = 0; x < SCREEN_W; x++)
-            Buffer1[y][x] = BLACK;
+    clear(BLACK);
 	
             
 	plot_logo();
