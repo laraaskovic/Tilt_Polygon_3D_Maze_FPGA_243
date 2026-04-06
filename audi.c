@@ -1889,7 +1889,6 @@ int main(void) {
     int phys_tick  = 0;
 
 	int ballSpeed = 0;
-    int sixtyFrameCounter = 0;
 
     timer_hw_init();
 
@@ -1916,12 +1915,9 @@ int main(void) {
             draw_ball(agent_px, agent_py, COL_AGENT, prev_tilt);
 
         //calculations
-        if (sixtyFrameCounter == 60) {
-            sixtyFrameCounter = 0;
-        } else {sixtyFrameCounter++;}
 
         //Things that happen once per second
-        if (!sixtyFrameCounter) {
+        if (timer_hw_tick()) {
 
             //Tickdown the timer
             round_timer_sec--;
@@ -2089,7 +2085,7 @@ int main(void) {
         }
 		
         // ── ACCELEROMETER INPUT ───────────────────────────────────────────
-        if (!sixtyFrameCounter) {
+        if (timer_hw_tick()) {
             unsigned char abuf[6];
             mpu_read_regs(gpio, REG_ACCEL_X_H, abuf, 6);
             short ax = -(short)((abuf[0] << 8) | abuf[1]);
