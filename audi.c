@@ -1977,7 +1977,7 @@ int main(void) {
 
         int nx = px, ny = py;
 
-        if(ballSpeed<7)
+        if(ballSpeed<15)
             ballSpeed++;
             
         if(prev_tilt == 'u'){
