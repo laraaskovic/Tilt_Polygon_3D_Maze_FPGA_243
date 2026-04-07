@@ -1948,7 +1948,6 @@ void draw_go_letter(int letter, int tx, int ty, short color) {
 void show_game_over_screen(void) {
 
     volatile int *pixel_ctrl = (int *)0xFF203020;
-
     *(pixel_ctrl+1) = (int)&Buffer2;
     *pixel_ctrl = 1;
     while ((*(pixel_ctrl+3) & 0x01) != 0);
@@ -1972,14 +1971,12 @@ void show_game_over_screen(void) {
     }
 
     // fill fully black
-    clear(BLACK);
-    *(pixel_ctrl + 1) = (int)back_buffer;
-    *pixel_ctrl = 1;
-    wait_for_vsync();
-    back_buffer = (back_buffer == Buffer1) ? Buffer2 : Buffer1;
-
     {int k = 0;
         while (k<60) {
+            clear(BLACK);
+            *(pixel_ctrl + 1) = (int)back_buffer;
+            *pixel_ctrl = 1;
+            back_buffer = (back_buffer == Buffer1) ? Buffer2 : Buffer1;
             wait_for_vsync();
             update_audio();
             k++;
