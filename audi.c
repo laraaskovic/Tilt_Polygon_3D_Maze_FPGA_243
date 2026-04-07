@@ -87,7 +87,7 @@ int gameState = 0;
 // runs at 100MHz so 100,000,000 ticks = 1 second
 // we set it to fire every 1 second directly
 #define TIMER_BASE       0xFF202000
-#define TIMER_TICKS_1SEC 100000000   // 100MHz * 1 second
+#define TIMER_TICKS_1SEC 50000000   // 100MHz * 1 second
 
 void timer_hw_init(void) {
     volatile int *timer = (int *) TIMER_BASE;
@@ -108,7 +108,7 @@ int timer_hw_tick(void) {
 
 
 // round timer globals — must be declared before draw_map, reset_round, and main
-#define ROUND_TIME_SEC  10
+#define ROUND_TIME_SEC  60
 int round_timer_sec  = ROUND_TIME_SEC;
 
 // only needed if you kept the software timer fallback, remove if using hardware timer
@@ -1156,6 +1156,7 @@ void draw_wall_tile(int col, int row, char tilt) {
 void draw_timer(int seconds) {
     // erase old timer area first
    // draw_rect(TIMER_X, TIMER_Y, 16, 12, BLACK);
+   seconds = seconds%2;
 
     short colors[] = {BLACK, WHITE};
     int d1 = seconds / 10;   // tens digit
