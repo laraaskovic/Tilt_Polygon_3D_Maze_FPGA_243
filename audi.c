@@ -2369,6 +2369,8 @@ int main(void) {
             if(b==0x29) { //space
                 if(gameState==0) {
                     reset_round(&cm, &px, &py);
+                    computerScore = 0;
+                    playerScore = 0;
                     gameState = 1;
                 }else if (gameState == 2){
                     gameState = 0;
