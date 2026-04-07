@@ -1481,7 +1481,7 @@ typedef struct {
 
 Portal portal = {0};
 int portal_spawn_timer = 0;
-#define PORTAL_SPAWN_INTERVAL 600  // ticks between spawns
+#define PORTAL_SPAWN_INTERVAL 200  // ticks between spawns
 
 
 void draw_portal(int col, int row, short color) {
@@ -2053,10 +2053,15 @@ void draw_map(int m, char tilt) {
 // ────────────────────────────────────────────────────────────────────────────
 // round reset — pick new map, place both balls, spawn target
 // ────────────────────────────────────────────────────────────────────────────
+int justBounced = 0;
+int cyclesSinceBounce;
 
 void reset_round(int *cm, int *px, int *py) {
     round_timer_sec  = ROUND_TIME_SEC; 
     timer_tick_count = 0; 
+
+    erase_portals();
+    portal.active = 0;
 
     *cm = rand() % NUM_MAPS;
     draw_map(*cm, 'n');
@@ -2074,14 +2079,14 @@ void reset_round(int *cm, int *px, int *py) {
     spawn_target(*cm, 1, 1);
 	prev_tilt = 'u';
 
+    justBounced = 0;
+    cyclesSinceBounce = 0;
+
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 // main game loop
 // ────────────────────────────────────────────────────────────────────────────
-
-int justBounced = 0;
-int cyclesSinceBounce;
 
 int main(void) {
     volatile int *pixel_ctrl = (int *)0xFF203020;
@@ -2262,9 +2267,9 @@ int main(void) {
                 playerScore++;
                 trigger_clip(snd_target, snd_target_len);
 
-                ballSpeed=0;
                 reset_round(&cm, &px, &py);
                 agent_tick = 0;
+                ballSpeed=0;
                 prev_tilt = 'n';
                 dfs_index = dfs_len = 0;
 
@@ -2275,6 +2280,8 @@ int main(void) {
                 trigger_clip(snd_target, snd_target_len);  
 
                 reset_round(&cm, &px, &py);
+                ballSpeed=0;
+                prev_tilt = 'n';
                 dfs_index = dfs_len = 0; // reset DFS state
                 continue;
             }
