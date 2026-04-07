@@ -2215,7 +2215,7 @@ int main(void) {
             theta = (theta + 1) % 360;
             plot_logo();
         }
-        if (gameState==1) { //GAME
+        else if (gameState==1) { //GAME
             //drawings
             draw_map(cm, prev_tilt);
             draw_target(target_col, target_row, COL_TARGET);
@@ -2241,6 +2241,7 @@ int main(void) {
                     prev_tilt  = 'n';
                     agent_tick = 0;
                     reset_round(&cm, &px, &py);
+                    continue;
                 }
 
                 //move agent if a mode is active
@@ -2432,10 +2433,10 @@ int main(void) {
             // ── END ACCELEROMETER INPUT ───────────────────────────────────────
 
         }
-        if (gameState==2) {
+        else if (gameState==2) {
             plot_pause();
         }
-        if (gameState==3) {
+        else if (gameState==3) {
             clear(BLACK);
             plot_logo();
             plot_movement();
