@@ -2079,8 +2079,8 @@ void show_game_over_screen(void) {
         plot_game_over();
 
         if (blink) {
-            for(int y = 0; y < 240; y++){
-                for(int x = 0; x < 160; x++){
+            for(int y = 150; y < 200; y++){
+                for(int x = 140; x < 180; x++){
                     plot_pixel(x,y,BLACK);
                 }
             }
