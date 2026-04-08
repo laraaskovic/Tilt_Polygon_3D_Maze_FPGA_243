@@ -80,6 +80,7 @@ def train():
         epsilon = max(EPS_END, epsilon * EPS_DECAY)
         rewards_log.append(total_reward)
 
+
         # print progress every 500 episodes
         if ep % PRINT_EVERY == 0:
             window = rewards_log[-100:] if len(rewards_log) >= 100 else rewards_log
